@@ -110,3 +110,77 @@ print(first_image.numpy())
 # Explore preprocessed training dataset images.
 preview_dataset(dataset_train)
 
+# Data Augmentation
+# Step 3 - Preprocessing : rotate the image for the left hand and adjust the background color
+def augment_flip(image: tf.Tensor) -> tf.Tensor:
+    image = tf.image.random_flip_left_right(image)
+    image = tf.image.random_flip_up_down(image)
+    return image
+
+def augment_color(image: tf.Tensor) -> tf.Tensor:
+    image = tf.image.random_hue(image, max_delta=0.08)
+    image = tf.image.random_saturation(image, lower=0.7, upper=1.3)
+    image = tf.image.random_brightness(image, 0.05)
+    image = tf.image.random_contrast(image, lower=0.8, upper=1)
+    image = tf.clip_by_value(image, clip_value_min=0, clip_value_max=1)
+    return image
+
+def augment_rotation(image: tf.Tensor) -> tf.Tensor:
+    # Rotate 0, 90, 180, 270 degrees
+    return tf.image.rot90(
+        image,
+        tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
+    )
+
+def augment_inversion(image: tf.Tensor) -> tf.Tensor:
+    random = tf.random.uniform(shape=[], minval=0, maxval=1)
+    if random > 0.5:
+        image = tf.math.multiply(image, -1)
+        image = tf.math.add(image, 1)
+    return image
+
+def augment_zoom(image: tf.Tensor, min_zoom=0.8, max_zoom=1.0) -> tf.Tensor:
+    image_width, image_height, image_colors = image.shape
+    crop_size = (image_width, image_height)
+
+    # Generate crop settings, ranging from a 1% to 20% crop.
+    scales = list(np.arange(min_zoom, max_zoom, 0.01))
+    boxes = np.zeros((len(scales), 4))
+
+    for i, scale in enumerate(scales):
+        x1 = y1 = 0.5 - (0.5 * scale)
+        x2 = y2 = 0.5 + (0.5 * scale)
+        boxes[i] = [x1, y1, x2, y2]
+
+    def random_crop(img):
+        # Create different crops for an image
+        crops = tf.image.crop_and_resize(
+            [img],
+            boxes=boxes,
+            box_indices=np.zeros(len(scales)),
+            crop_size=crop_size
+        )
+        # Return a random crop
+        return crops[tf.random.uniform(shape=[], minval=0, maxval=len(scales), dtype=tf.int32)]
+
+    choice = tf.random.uniform(shape=[], minval=0., maxval=1., dtype=tf.float32)
+
+    # Only apply cropping 50% of the time
+    return tf.cond(choice < 0.5, lambda: image, lambda: random_crop(image))
+
+def augment_data(image, label):
+    image = augment_flip(image)
+    image = augment_color(image)
+    image = augment_rotation(image)
+    image = augment_zoom(image)
+    image = augment_inversion(image)
+    return image, label
+
+dataset_train_augmented = dataset_train.map(augment_data)
+
+# Explore augmented training dataset.
+preview_dataset(dataset_train_augmented)
+
+
+
+
