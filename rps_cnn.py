@@ -111,7 +111,7 @@ print(first_image.numpy())
 preview_dataset(dataset_train)
 
 # Data Augmentation
-# Step 3 - Preprocessing : rotate the image for the left hand and adjust the background color
+# Step 1(cont.) - Preprocessing : rotate the image for the left hand and adjust the background color
 def augment_flip(image: tf.Tensor) -> tf.Tensor:
     image = tf.image.random_flip_left_right(image)
     image = tf.image.random_flip_up_down(image)
@@ -180,6 +180,201 @@ dataset_train_augmented = dataset_train.map(augment_data)
 
 # Explore augmented training dataset.
 preview_dataset(dataset_train_augmented)
+
+# Step 1(cont.) -  Data Shuffling and Batching
+# Prepare for training the model
+BATCH_SIZE = 32
+
+dataset_train_augmented_shuffled = dataset_train_augmented.shuffle(
+    buffer_size=NUM_TRAIN_EXAMPLES
+)
+
+dataset_train_augmented_shuffled = dataset_train_augmented.batch(
+    batch_size=BATCH_SIZE
+)
+
+# Prefetch will enable the input pipeline to asynchronously fetch batches while your model is training.
+dataset_train_augmented_shuffled = dataset_train_augmented_shuffled.prefetch(
+    buffer_size=tf.data.experimental.AUTOTUNE
+)
+
+dataset_test_shuffled = dataset_test.batch(BATCH_SIZE)
+
+# Debugging the batches using conversion to Numpy arrays.
+batches = tfds.as_numpy(dataset_train_augmented_shuffled)
+for batch in batches:
+    image_batch, label_batch = batch
+    print('Label batch shape:', label_batch.shape, '\n')
+    print('Image batch shape:', image_batch.shape, '\n')
+    print('Label batch:', label_batch, '\n')
+    
+    for batch_item_index in range(len(image_batch)):
+        print('First batch image:', image_batch[batch_item_index], '\n')
+        plt.imshow(image_batch[batch_item_index])
+        plt.show()
+        # Break to shorten the output.
+        break
+    # Break to shorten the output.
+    break
+
+# Step 3 - Modeling
+# Architect the Model
+model = tf.keras.models.Sequential()
+
+# First convolution.
+model.add(tf.keras.layers.Convolution2D(
+    input_shape=INPUT_IMG_SHAPE,
+    filters=64,
+    kernel_size=3,
+    activation=tf.keras.activations.relu
+))
+model.add(tf.keras.layers.MaxPooling2D(
+    pool_size=(2, 2),
+    strides=(2, 2)
+))
+
+# Second convolution.
+model.add(tf.keras.layers.Convolution2D(
+    filters=64,
+    kernel_size=3,
+    activation=tf.keras.activations.relu
+))
+model.add(tf.keras.layers.MaxPooling2D(
+    pool_size=(2, 2),
+    strides=(2, 2)
+))
+
+# Third convolution.
+model.add(tf.keras.layers.Convolution2D(
+    filters=128,
+    kernel_size=3,
+    activation=tf.keras.activations.relu
+))
+model.add(tf.keras.layers.MaxPooling2D(
+    pool_size=(2, 2),
+    strides=(2, 2)
+))
+
+# Fourth convolution.
+model.add(tf.keras.layers.Convolution2D(
+    filters=128,
+    kernel_size=3,
+    activation=tf.keras.activations.relu
+))
+model.add(tf.keras.layers.MaxPooling2D(
+    pool_size=(2, 2),
+    strides=(2, 2)
+))
+
+# Flatten the results to feed into dense layers.
+model.add(tf.keras.layers.Flatten())
+model.add(tf.keras.layers.Dropout(0.5))
+
+# 512 neuron dense layer.
+model.add(tf.keras.layers.Dense(
+    units=512,
+    activation=tf.keras.activations.relu
+))
+
+# Output layer.
+model.add(tf.keras.layers.Dense(
+    units=NUM_CLASSES,
+    activation=tf.keras.activations.softmax
+))
+
+model.summary()
+tf.keras.utils.plot_model(
+    model,
+    show_shapes=True,
+    show_layer_names=True,
+)
+
+# Compling the model
+# adam_optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+rmsprop_optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.001)
+
+model.compile(
+    optimizer=rmsprop_optimizer,
+    loss=tf.keras.losses.sparse_categorical_crossentropy,
+    metrics=['accuracy']
+)
+
+# Training the model
+steps_per_epoch = NUM_TRAIN_EXAMPLES // BATCH_SIZE
+validation_steps = NUM_TEST_EXAMPLES // BATCH_SIZE
+
+print('steps_per_epoch:', steps_per_epoch)
+print('validation_steps:', validation_steps)
+
+# remove the temporary files for the model
+# !rm -rf tmp/checkpoints
+# !rm -rf logs
+
+# Preparing callbacks.
+os.makedirs('logs/fit', exist_ok=True)
+tensorboard_log_dir = 'logs/fit/' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+tensorboard_callback = tf.keras.callbacks.TensorBoard(
+    log_dir=tensorboard_log_dir,
+    histogram_freq=1
+)
+
+os.makedirs('tmp/checkpoints', exist_ok=True)
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath='tmp/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5'
+)
+
+early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+    patience=5,
+    monitor='val_accuracy'
+    # monitor='val_loss'
+)
+
+training_history = model.fit(
+    x=dataset_train_augmented_shuffled.repeat(),
+    validation_data=dataset_test_shuffled.repeat(),
+    epochs=15,
+    steps_per_epoch=steps_per_epoch,
+    validation_steps=validation_steps,
+    callbacks=[
+        # model_checkpoint_callback,
+        # early_stopping_callback,
+        tensorboard_callback
+    ],
+    verbose=1
+)
+
+def render_training_history(training_history):
+    loss = training_history.history['loss']
+    val_loss = training_history.history['val_loss']
+
+    accuracy = training_history.history['accuracy']
+    val_accuracy = training_history.history['val_accuracy']
+
+    plt.figure(figsize=(14, 4))
+
+    plt.subplot(1, 2, 1)
+    plt.title('Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.plot(loss, label='Training set')
+    plt.plot(val_loss, label='Test set', linestyle='--')
+    plt.legend()
+    plt.grid(linestyle='--', linewidth=1, alpha=0.5)
+
+    plt.subplot(1, 2, 2)
+    plt.title('Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.plot(accuracy, label='Training set')
+    plt.plot(val_accuracy, label='Test set', linestyle='--')
+    plt.legend()
+    plt.grid(linestyle='--', linewidth=1, alpha=0.5)
+
+    plt.show()
+
+# Evaluate the model accuracy
+
+
 
 
 
